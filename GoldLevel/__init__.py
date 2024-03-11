@@ -16,7 +16,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
 
         # List directories (which are by year)
         years = ['1999-2000', '2001-2002', '2003-2004','2005-2006','2007-2008','2009-2010','2011-2012','2013-2014','2015-2016','2017-2020']  # List all years here
-        patterns = ['BMX', 'DBQ', 'DEMO', 'OHQ', 'SLQ', 'SMQ', 'SMQFAM', 'SMQMEC', 'WHQ','COT','SMQRTU']
+        patterns = ['BMX', 'DBQ', 'DEMO', 'OHQ', 'SLQ', 'SMQ', 'SMQFAM', 'SMQMEC', 'WHQ','COT','SMQRTU','COTNAL']
         
         for year in years:
             year_df = pd.DataFrame()  # DataFrame to hold year-specific data
@@ -25,14 +25,14 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             file_blobs = source_container_client.list_blobs(name_starts_with=f'{year}/')
             for blob in file_blobs:
                 file_name = blob.name.split('/')[1]
+                # Remove underscores and any characters after it
+                clean_file_name = file_name.split('_')[0]
+                
                 # Check if the file name contains any of the patterns
-                if any(pattern in file_name for pattern in patterns):
-                    # Remove underscores and any characters after it
-                    clean_file_name = file_name.split('_')[0]
+                if clean_file_name in patterns:
                     blob_client = source_container_client.get_blob_client(blob)
                     blob_data = blob_client.download_blob().readall()
                     data = pd.read_csv(BytesIO(blob_data))
-
                     # Add the year as a column before processing
                     data['Year'] = year
 
@@ -55,7 +55,10 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                         data = process_smqmec_file(year,data)
                     elif 'WHQ' in clean_file_name:
                         data = process_whq_file(year,data)
+                    #if cot or cotnal in the file name, call the process_cot_file function
                     elif 'COT' in clean_file_name:
+                        data = process_cot_file(year,data)
+                    elif 'COTNAL' in clean_file_name:
                         data = process_cot_file(year,data)
                     elif 'SMQRTU' in clean_file_name:
                         data = process_smqrtu_file(year,data)
@@ -190,6 +193,7 @@ def process_whq_file(year,data):
 
 def process_cot_file(year,data):
     return data[['SEQN','LBXCOT']]
+
 
 def process_smqrtu_file(year,data):
     if year in ['2005-2006','2007-2008','2009-2010','2011-2012']:
