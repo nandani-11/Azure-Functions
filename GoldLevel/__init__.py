@@ -1,7 +1,7 @@
 import azure.functions as func
 import pandas as pd
 from io import BytesIO
-from azure.storage.blob import BlobServiceClient
+from azure.storage.blob import BlobServiceClient, ContentSettings
 import os
 
 def main(req: func.HttpRequest) -> func.HttpResponse:
@@ -42,23 +42,23 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     elif 'DBQ' in clean_file_name:
                         data = process_dbq_file(year,data)
                     elif 'DEMO' in clean_file_name:
-                        data = process_demo_file(data)
+                        data = process_demo_file(year,data)
                     elif 'OHQ' in clean_file_name:
-                        data = process_ohq_file(data)
+                        data = process_ohq_file(year,data)
                     elif 'SLQ' in clean_file_name:
-                        data = process_slq_file(data)
+                        data = process_slq_file(year,data)
                     elif 'SMQ' in clean_file_name:
-                        data = process_smq_file(data)
+                        data = process_smq_file(year,data)
                     elif 'SMQFAM' in clean_file_name:
-                        data = process_smqfam_file(data)
+                        data = process_smqfam_file(year,data)
                     elif 'SMQMEC' in clean_file_name:
-                        data = process_smqmec_file(data)
+                        data = process_smqmec_file(year,data)
                     elif 'WHQ' in clean_file_name:
-                        data = process_whq_file(data)
+                        data = process_whq_file(year,data)
                     elif 'COT' in clean_file_name:
-                        data = process_cot_file(data)
+                        data = process_cot_file(year,data)
                     elif 'SMQRTU' in clean_file_name:
-                        data = process_smqrtu_file(data)
+                        data = process_smqrtu_file(year,data)
                     else:
                         raise ValueError(f"File name {file_name} does not match any of the patterns.")
                     
@@ -137,10 +137,71 @@ def process_demo_file(year,data):
         #rename DMDMARTZ to DMDMARTL
         data.rename(columns={'DMDMARTZ':'DMDMARTL'}, inplace=True)
         data = data[['SEQN','RIAGENDR','RIDAGEYR','RIDEXMON','DMDBORN','DMDEDUC2','DMDMARTL','INDFMPIR','FIALANG','AIALANG','SIALANG','MIALANG']]
-    
+    return data
 
+def process_ohq_file(year,data):
+    # Apply transformations for OHQ file
+    data = data[['SEQN','OHQ033']]
+    return data
 
+def process_slq_file(year,data):
+    # Apply transformations for SLQ file
+    if year in ['1999-2000', '2001-2002', '2003-2004','2015-2016','2017-2020']:        
+        data = data[['SEQN','SLD012']]
+    else: 
+        #rename SLD010H to SLD012
+        data.rename(columns={'SLD010H':'SLD012'}, inplace=True)
+        data = data[['SEQN','SLD012']]
+    return data
+
+def process_smq_file(year,data):
+    return data[['SEQN','SMQ020']]
+
+def process_smqfam_file(year,data):
+    if year in ['1999-2000','2001-2002','2003-2004','2005-2006','2007-2008','2009-2010','2011-2012']:
+        #rename SMD415 to SMD460
+        data.rename(columns={'SMD415':'SMD460'}, inplace=True)
+        data = data[['SEQN','SMD460']]
+    else:
+        data = data[['SEQN','SMD460']]
+    return data
+
+def process_smqmec_file(year,data):
+    if year in ['1999-2000','2001-2002','2003-2004']:
+        #rename SMD690D to SMQ851
+        data.rename(columns={'SMD690D':'SMQ851'}, inplace=True)
+        #rename SMD680 to SMDANY
+        data.rename(columns={'SMD680':'SMDANY'}, inplace=True)
+        #duplicate SMDANY and rename this new column to SMQ681
+        data['SMQ681'] = data['SMDANY']
+        data = data[['SEQN','SMQ851','SMDANY','SMQ681']]
+    else:
+        data = data[['SEQN','SMQ851','SMDANY','SMQ681']]
+    return data
+
+def process_whq_file(year,data):
+    if year in ['1999-2000']:
+        #rename WHD150 to WHQ150
+        data.rename(columns={'WHD150':'WHQ150'}, inplace=True)
+        data = data[['SEQN','WHQ150','WHD140','WHD050','WHD020','WHD010']]
+    else:
+        data = data[['SEQN','WHQ150','WHD140','WHD050','WHD020','WHD010']]
+    return data
+
+def process_cot_file(year,data):
+    return data[['SEQN','LBXCOT']]
+
+def process_smqrtu_file(year,data):
+    if year in ['2005-2006','2007-2008','2009-2010','2011-2012']:
+        #rename SMQ690D to SMQ851
+        data.rename(columns={'SMQ690D':'SMQ851'}, inplace=True)
+        #rename SMQ680 to SMDANY
+        data.rename(columns={'SMQ680':'SMDANY'}, inplace=True)
+        #duplicate SMDANY and rename this new column to SMQ681
+        data['SMQ681'] = data['SMDANY']
+        data = data[['SEQN','SMQ851','SMDANY','SMQ681']]
+    else:
+        data = data[['SEQN','SMQ851','SMDANY','SMQ681']]
     return data
 
 
-# ... rest of the code remains the same ...
