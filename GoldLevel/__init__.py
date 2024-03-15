@@ -3,6 +3,7 @@ import pandas as pd
 from io import BytesIO
 from azure.storage.blob import BlobServiceClient, ContentSettings
 import os
+import logging
 
 def main(req: func.HttpRequest) -> func.HttpResponse:
     try:
@@ -16,25 +17,32 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
 
         # List directories (which are by year)
         years = ['1999-2000', '2001-2002', '2003-2004','2005-2006','2007-2008','2009-2010','2011-2012','2013-2014','2015-2016','2017-2020']  # List all years here
-        patterns = ['BMX', 'DBQ', 'DEMO', 'OHQ', 'SLQ', 'SMQ', 'SMQFAM', 'SMQMEC', 'WHQ','COT','SMQRTU','COTNAL']
+        patterns = ['BMX', 'DBQ', 'DEMO', 'OHQ', 'SLQ','SMQ', 'SMQFAM', 'SMQRTU', 'SMQMEC', 'WHQ','COT']
         
         for year in years:
             year_df = pd.DataFrame()  # DataFrame to hold year-specific data
 
             # List files in the year directory
             file_blobs = source_container_client.list_blobs(name_starts_with=f'{year}/')
+            
             for blob in file_blobs:
-                file_name = blob.name.split('/')[1]
-                # Remove underscores and any characters after it
-                clean_file_name = file_name.split('_')[0]
-                
+                file_name = blob.name.split('/')[1].upper()
+                # if the file has an underscore Remove underscores and any characters after it 
+                if '_' in file_name:
+                    clean_file_name = file_name.split('_')[0]
+                else:
+                    clean_file_name = file_name.split('.')[0]
+
                 # Check if the file name contains any of the patterns
                 if clean_file_name in patterns:
                     blob_client = source_container_client.get_blob_client(blob)
                     blob_data = blob_client.download_blob().readall()
-                    data = pd.read_csv(BytesIO(blob_data))
-                    # Add the year as a column before processing
-                    data['Year'] = year
+                    data = pd.read_csv(BytesIO(blob_data))                    
+                    # if 'SMQ020' in data.columns:
+                    #     print(f"Processing file: {file_name}, Columns: {data.columns.tolist()}")
+                    # else:
+                    #     print(f"Column 'SMQ020' not found in file: {file_name}, Columns: {data.columns.tolist()}")
+                    #     continue 
 
                     # Apply specific transformations based on the file pattern
                     if 'BMX' in clean_file_name:
@@ -55,48 +63,53 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                         data = process_smqmec_file(year,data)
                     elif 'WHQ' in clean_file_name:
                         data = process_whq_file(year,data)
-                    #if cot or cotnal in the file name, call the process_cot_file function
-                    elif 'COT' in clean_file_name:
-                        data = process_cot_file(year,data)
-                    elif 'COTNAL' in clean_file_name:
-                        data = process_cot_file(year,data)
                     elif 'SMQRTU' in clean_file_name:
                         data = process_smqrtu_file(year,data)
+                    elif 'COT' in clean_file_name:
+                        data = process_cot_file(year,data)
                     else:
                         raise ValueError(f"File name {file_name} does not match any of the patterns.")
                     
                     # Merge the data from this file to the year-specific DataFrame
-                    year_df = year_df.merge(data, on='SEQN', how='outer') if not year_df.empty else data
+                    if year_df.empty:
+                        year_df = data
+                    else:
+                        year_df = pd.merge(year_df,data, on='SEQN', how='outer')
+                    
+                    year_df['Year'] = year  # Add a column to the year-specific DataFrame to indicate the year
+
 
             # Add the year-specific data to the final DataFrame
             final_df = pd.concat([final_df, year_df], axis=0)
 
         # Upload the final DataFrame to the 'gold-level' container
         # Convert DataFrame to CSV
-            csv_data = final_df.to_csv(index=False)
+        csv_data = final_df.to_csv(index=False)
 
-            # Define the name for the blob using the current timestamp or other unique identifier
-            from datetime import datetime
-            blob_name = f"combined_data_{datetime.now().strftime('%Y-%m-%d-%H-%M-%S')}.csv"
+        # Encode the CSV data to bytes
+        csv_bytes = csv_data.encode('utf-8')
 
-            # Define content settings for the blob
-            content_settings = ContentSettings(content_type='text/csv')
+        # Define the name for the blob using the current timestamp or other unique identifier
+        from datetime import datetime
+        blob_name = f"combined_data_{datetime.now().strftime('%Y-%m-%d-%H-%M-%S')}.csv"
 
-            # Get a blob client for the 'gold-level' container
-            blob_client = destination_container_client.get_blob_client(blob=blob_name)
+        # Define content settings for the blob
+        content_settings = ContentSettings(content_type='application/octet-stream')
 
-            # Upload the CSV data to the 'gold-level' container
-            blob_client.upload_blob(csv_data, overwrite=True, content_settings=content_settings)
+        # Get a blob client for the 'gold-level' container
+        blob_client = destination_container_client.get_blob_client(blob=blob_name)
+
+        # Upload the CSV data to the 'gold-level' container
+        blob_client.upload_blob(csv_bytes, overwrite=True, content_settings=content_settings)
 
         # Confirm upload
         return func.HttpResponse(f"Data processed and uploaded to gold-level/{blob_name} successfully.", status_code=200)
 
-        # return func.HttpResponse(f"Data processed and stored successfully.", status_code=200)
     except Exception as e:
         return func.HttpResponse(f"An error occurred: {str(e)}", status_code=500)
 
 # Define your file-specific processing functions here
-# process_bmx_file, process_dbq_file, etc.
+
 def process_bmx_file(year,data):
     # Apply transformations for BMX file
     return data[['SEQN','BMXBMI','BMXLEG','BMXWAIST','BMXWT','BMXHT','BMXARMC','BMXARML']]
@@ -108,9 +121,16 @@ def process_dbq_file(year,data):
         data.rename(columns={'DBD090':'DBD895'}, inplace=True)
         data['DBD910'] = None
         data['DBD905'] = None
+    elif year in ['2005-2006']:
+        data = data[['SEQN','DBD091']]
+        data.rename(columns={'DBD091':'DBD895'}, inplace=True)
+        data['DBD910'] = None
+        data['DBD905'] = None
     else:
         data = data[['SEQN','DBD895','DBD905','DBD910']]
     return data
+
+
 
 def process_demo_file(year,data):
     # Apply transformations for DEMO file
@@ -158,7 +178,7 @@ def process_slq_file(year,data):
     return data
 
 def process_smq_file(year,data):
-    return data[['SEQN','SMQ020']]
+    return data[['SEQN', 'SMQ020']]
 
 def process_smqfam_file(year,data):
     if year in ['1999-2000','2001-2002','2003-2004','2005-2006','2007-2008','2009-2010','2011-2012']:
@@ -168,31 +188,6 @@ def process_smqfam_file(year,data):
     else:
         data = data[['SEQN','SMD460']]
     return data
-
-def process_smqmec_file(year,data):
-    if year in ['1999-2000','2001-2002','2003-2004']:
-        #rename SMD690D to SMQ851
-        data.rename(columns={'SMD690D':'SMQ851'}, inplace=True)
-        #rename SMD680 to SMDANY
-        data.rename(columns={'SMD680':'SMDANY'}, inplace=True)
-        #duplicate SMDANY and rename this new column to SMQ681
-        data['SMQ681'] = data['SMDANY']
-        data = data[['SEQN','SMQ851','SMDANY','SMQ681']]
-    else:
-        data = data[['SEQN','SMQ851','SMDANY','SMQ681']]
-    return data
-
-def process_whq_file(year,data):
-    if year in ['1999-2000']:
-        #rename WHD150 to WHQ150
-        data.rename(columns={'WHD150':'WHQ150'}, inplace=True)
-        data = data[['SEQN','WHQ150','WHD140','WHD050','WHD020','WHD010']]
-    else:
-        data = data[['SEQN','WHQ150','WHD140','WHD050','WHD020','WHD010']]
-    return data
-
-def process_cot_file(year,data):
-    return data[['SEQN','LBXCOT']]
 
 
 def process_smqrtu_file(year,data):
@@ -207,5 +202,31 @@ def process_smqrtu_file(year,data):
     else:
         data = data[['SEQN','SMQ851','SMDANY','SMQ681']]
     return data
+
+def process_smqmec_file(year,data):
+    if year in ['1999-2000','2001-2002','2003-2004']:
+        #rename SMD690D to SMQ851
+        data.rename(columns={'SMD690D':'SMQ851'}, inplace=True)
+        #rename SMD680 to SMDANY
+        data.rename(columns={'SMD680':'SMDANY'}, inplace=True)
+        #duplicate SMDANY and rename this new column to SMQ681
+        data['SMQ681'] = data['SMDANY']
+        data = data[['SEQN','SMQ851','SMDANY','SMQ681']]
+
+    return data
+
+def process_whq_file(year,data):
+    if year in ['1999-2000']:
+        #rename WHD150 to WHQ150
+        data.rename(columns={'WHD150':'WHQ150'}, inplace=True)
+        data = data[['SEQN','WHQ150','WHD140','WHD050','WHD020','WHD010']]
+    else:
+        data = data[['SEQN','WHQ150','WHD140','WHD050','WHD020','WHD010']]
+    return data
+
+def process_cot_file(year,data):
+    return data[['SEQN', 'LBXCOT']]         
+
+
 
 
