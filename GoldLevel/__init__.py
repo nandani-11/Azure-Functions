@@ -4,9 +4,12 @@ from io import BytesIO
 from azure.storage.blob import BlobServiceClient, ContentSettings
 import os
 import logging
+from datetime import datetime
+from sklearn.model_selection import train_test_split
 
 def main(req: func.HttpRequest) -> func.HttpResponse:
     try:
+        req_body = req.get_json() if req.get_body() else {}
         # Connection string to your Azure Storage account
         connection_string = os.environ['AzureWebJobsStorage']
         blob_service_client = BlobServiceClient.from_connection_string(connection_string)
@@ -37,35 +40,31 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 if clean_file_name in patterns:
                     blob_client = source_container_client.get_blob_client(blob)
                     blob_data = blob_client.download_blob().readall()
-                    data = pd.read_csv(BytesIO(blob_data))                    
-                    # if 'SMQ020' in data.columns:
-                    #     print(f"Processing file: {file_name}, Columns: {data.columns.tolist()}")
-                    # else:
-                    #     print(f"Column 'SMQ020' not found in file: {file_name}, Columns: {data.columns.tolist()}")
-                    #     continue 
+                    data = pd.read_csv(BytesIO(blob_data))  
+                    data.columns = data.columns.str.upper()  # Convert column names to uppercase
 
                     # Apply specific transformations based on the file pattern
-                    if 'BMX' in clean_file_name:
+                    if 'BMX' == clean_file_name:
                         data = process_bmx_file(year,data)
-                    elif 'DBQ' in clean_file_name:
+                    elif 'DBQ' == clean_file_name:
                         data = process_dbq_file(year,data)
-                    elif 'DEMO' in clean_file_name:
+                    elif 'DEMO' == clean_file_name:
                         data = process_demo_file(year,data)
-                    elif 'OHQ' in clean_file_name:
+                    elif 'OHQ' == clean_file_name:
                         data = process_ohq_file(year,data)
-                    elif 'SLQ' in clean_file_name:
+                    elif 'SLQ' == clean_file_name:
                         data = process_slq_file(year,data)
-                    elif 'SMQ' in clean_file_name:
+                    elif 'SMQ' == clean_file_name:
                         data = process_smq_file(year,data)
-                    elif 'SMQFAM' in clean_file_name:
+                    elif 'SMQFAM' == clean_file_name:
                         data = process_smqfam_file(year,data)
-                    elif 'SMQMEC' in clean_file_name:
+                    elif 'SMQMEC' == clean_file_name:
                         data = process_smqmec_file(year,data)
-                    elif 'WHQ' in clean_file_name:
+                    elif 'WHQ' == clean_file_name:
                         data = process_whq_file(year,data)
-                    elif 'SMQRTU' in clean_file_name:
+                    elif 'SMQRTU' == clean_file_name:
                         data = process_smqrtu_file(year,data)
-                    elif 'COT' in clean_file_name:
+                    elif 'COT' == clean_file_name:
                         data = process_cot_file(year,data)
                     else:
                         raise ValueError(f"File name {file_name} does not match any of the patterns.")
@@ -79,31 +78,51 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     year_df['Year'] = year  # Add a column to the year-specific DataFrame to indicate the year
 
 
-            # Add the year-specific data to the final DataFrame
+            # Add the year-specific data to the final DataFrame using skle
             final_df = pd.concat([final_df, year_df], axis=0)
 
+        # Split the dataframe into train and test sets
+        train_df, test_df = train_test_split(final_df, test_size=0.3, random_state=42)
+
+        if 'RIDRETH1' in train_df.columns:
+            train_df = train_df.drop(columns=['RIDRETH1'])
+
         # Upload the final DataFrame to the 'gold-level' container
-        # Convert DataFrame to CSV
-        csv_data = final_df.to_csv(index=False)
+        # Convert the train and test DataFrames to CSV
+        train_csv_data = train_df.to_csv(index=False)
+        test_csv_data = test_df.to_csv(index=False)
 
         # Encode the CSV data to bytes
-        csv_bytes = csv_data.encode('utf-8')
+        train_csv_bytes = train_csv_data.encode('utf-8')
+        test_csv_bytes = test_csv_data.encode('utf-8')
 
-        # Define the name for the blob using the current timestamp or other unique identifier
-        from datetime import datetime
-        blob_name = f"combined_data_{datetime.now().strftime('%Y-%m-%d-%H-%M-%S')}.csv"
+        # Get the current timestamp for unique file names
+        current_timestamp = datetime.now().strftime('%Y-%m-%d-%H-%M-%S')
+
+        # Define the names for the blobs
+        train_blob_name = f"traindata_{current_timestamp}.csv"
+        test_blob_name = f"testdata_{current_timestamp}.csv"
 
         # Define content settings for the blob
         content_settings = ContentSettings(content_type='application/octet-stream')
 
-        # Get a blob client for the 'gold-level' container
-        blob_client = destination_container_client.get_blob_client(blob=blob_name)
+        # Get blob clients for the 'gold-level' container
+        train_blob_client = destination_container_client.get_blob_client(blob=train_blob_name)
+        test_blob_client = destination_container_client.get_blob_client(blob=test_blob_name)
 
-        # Upload the CSV data to the 'gold-level' container
-        blob_client.upload_blob(csv_bytes, overwrite=True, content_settings=content_settings)
+
+        # Upload the train CSV data to the 'gold-level' container
+        train_blob_client.upload_blob(train_csv_bytes, overwrite=True, content_settings=content_settings)
+
+        # Upload the test CSV data to the 'gold-level' container
+        test_blob_client.upload_blob(test_csv_bytes, overwrite=True, content_settings=content_settings)
 
         # Confirm upload
-        return func.HttpResponse(f"Data processed and uploaded to gold-level/{blob_name} successfully.", status_code=200)
+        return func.HttpResponse(
+            f"Train and test data processed and uploaded to gold-level container successfully. "
+            f"Train data: {train_blob_name}, Test data: {test_blob_name}.",
+            status_code=200
+        )
 
     except Exception as e:
         return func.HttpResponse(f"An error occurred: {str(e)}", status_code=500)
@@ -116,7 +135,7 @@ def process_bmx_file(year,data):
 
 def process_dbq_file(year,data):
     # Apply transformations for DBQ file
-    if year in ['1999-2000', '2001-2002', '2003-2004','2005-2006']:
+    if year in ['1999-2000', '2001-2002', '2003-2004']:
         data = data[['SEQN','DBD090']]
         data.rename(columns={'DBD090':'DBD895'}, inplace=True)
         data['DBD910'] = None
@@ -135,23 +154,26 @@ def process_dbq_file(year,data):
 def process_demo_file(year,data):
     # Apply transformations for DEMO file
     if year in ['1999-2000', '2001-2002']:
-        data = data[['SEQN','RIAGENDR','RIDAGEYR','RIDEXMON','DMDBORN','DMDEDUC2','DMDMARTL','INDFMPIR']]
+        data = data[['SEQN','RIAGENDR','RIDAGEYR','RIDEXMON','RIDRETH1','DMDBORN','DMDEDUC2','DMDMARTL','INDFMPIR']]
         #adding columns FIALANG,AIALANGA ,SIALANG,MIALANG with value null
         data['FIALANG'] = None
         data['AIALANG'] = None
         data['SIALANG'] = None
         data['MIALANG'] = None
+
     elif year in ['2003-2004','2005-2006']:
-        data = data[['SEQN','RIAGENDR','RIDAGEYR','RIDEXMON','DMDBORN','DMDEDUC2','DMDMARTL','INDFMPIR','FIALANG','AIALANG','SIALANG','MIALANG']]
+        data = data[['SEQN','RIAGENDR','RIDAGEYR','RIDEXMON','RIDRETH1','DMDBORN','DMDEDUC2','DMDMARTL','INDFMPIR','FIALANG','AIALANG','SIALANG','MIALANG']]
+    
     elif year in ['2007-2008','2009-2010']:
          data.rename(columns={'DMDBORN2':'DMDBORN'}, inplace=True)
-         data = data[['SEQN','RIAGENDR','RIDAGEYR','RIDEXMON','DMDBORN','DMDEDUC2','DMDMARTL','INDFMPIR','FIALANG','AIALANG','SIALANG','MIALANG']]
+         data = data[['SEQN','RIAGENDR','RIDAGEYR','RIDEXMON','RIDRETH1','DMDBORN','DMDEDUC2','DMDMARTL','INDFMPIR','FIALANG','AIALANG','SIALANG','MIALANG']]
+   
     elif year in ['2011-2012','2013-2014','2015-2016']:
         #rename DMDBORN4 to DMDBORN
         data.rename(columns={'DMDBORN4':'DMDBORN'}, inplace=True)
         #rename AIALANGA to AIALANG
         data.rename(columns={'AIALANGA':'AIALANG'}, inplace=True)
-        data = data[['SEQN','RIAGENDR','RIDAGEYR','RIDEXMON','DMDBORN','DMDEDUC2','DMDMARTL','INDFMPIR','FIALANG','AIALANG','SIALANG','MIALANG']]
+        data = data[['SEQN','RIAGENDR','RIDAGEYR','RIDEXMON','RIDRETH1','DMDBORN','DMDEDUC2','DMDMARTL','INDFMPIR','FIALANG','AIALANG','SIALANG','MIALANG']]
     else:
         #rename DMDBORN4 to DMDBORN
         data.rename(columns={'DMDBORN4':'DMDBORN'}, inplace=True)
@@ -159,7 +181,7 @@ def process_demo_file(year,data):
         data.rename(columns={'AIALANGA':'AIALANG'}, inplace=True)
         #rename DMDMARTZ to DMDMARTL
         data.rename(columns={'DMDMARTZ':'DMDMARTL'}, inplace=True)
-        data = data[['SEQN','RIAGENDR','RIDAGEYR','RIDEXMON','DMDBORN','DMDEDUC2','DMDMARTL','INDFMPIR','FIALANG','AIALANG','SIALANG','MIALANG']]
+        data = data[['SEQN','RIAGENDR','RIDAGEYR','RIDEXMON','RIDRETH1','DMDBORN','DMDEDUC2','DMDMARTL','INDFMPIR','FIALANG','AIALANG','SIALANG','MIALANG']]
     return data
 
 def process_ohq_file(year,data):
@@ -204,11 +226,19 @@ def process_smqrtu_file(year,data):
     return data
 
 def process_smqmec_file(year,data):
-    if year in ['1999-2000','2001-2002','2003-2004']:
+    if year in ['1999-2000']:
         #rename SMD690D to SMQ851
         data.rename(columns={'SMD690D':'SMQ851'}, inplace=True)
         #rename SMD680 to SMDANY
         data.rename(columns={'SMD680':'SMDANY'}, inplace=True)
+        #duplicate SMDANY and rename this new column to SMQ681
+        data['SMQ681'] = data['SMDANY']
+        data = data[['SEQN','SMQ851','SMDANY','SMQ681']]
+    elif year in ['2001-2002','2003-2004']:
+        #rename SMD690D to SMQ851
+        data.rename(columns={'SMQ690D':'SMQ851'}, inplace=True)
+        #rename SMD680 to SMDANY
+        data.rename(columns={'SMQ680':'SMDANY'}, inplace=True)
         #duplicate SMDANY and rename this new column to SMQ681
         data['SMQ681'] = data['SMDANY']
         data = data[['SEQN','SMQ851','SMDANY','SMQ681']]

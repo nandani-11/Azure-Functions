@@ -5,3 +5,6 @@
 azure-functions
 azure-storage-blob
 pandas
+applicationinsights
+scikit-learn
+azure-ai-ml
