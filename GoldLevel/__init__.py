@@ -43,32 +43,26 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     data = pd.read_csv(BytesIO(blob_data))  
                     data.columns = data.columns.str.upper()  # Convert column names to uppercase
 
-                    # Apply specific transformations based on the file pattern
-                    if 'BMX' == clean_file_name:
-                        data = process_bmx_file(year,data)
-                    elif 'DBQ' == clean_file_name:
-                        data = process_dbq_file(year,data)
-                    elif 'DEMO' == clean_file_name:
-                        data = process_demo_file(year,data)
-                    elif 'OHQ' == clean_file_name:
-                        data = process_ohq_file(year,data)
-                    elif 'SLQ' == clean_file_name:
-                        data = process_slq_file(year,data)
-                    elif 'SMQ' == clean_file_name:
-                        data = process_smq_file(year,data)
-                    elif 'SMQFAM' == clean_file_name:
-                        data = process_smqfam_file(year,data)
-                    elif 'SMQMEC' == clean_file_name:
-                        data = process_smqmec_file(year,data)
-                    elif 'WHQ' == clean_file_name:
-                        data = process_whq_file(year,data)
-                    elif 'SMQRTU' == clean_file_name:
-                        data = process_smqrtu_file(year,data)
-                    elif 'COT' == clean_file_name:
-                        data = process_cot_file(year,data)
+                    # Mapping of file names to processing functions
+                    file_processing_functions = {
+                        'BMX': process_bmx_file,
+                        'DBQ': process_dbq_file,
+                        'DEMO': process_demo_file,
+                        'OHQ': process_ohq_file,
+                        'SLQ': process_slq_file,
+                        'SMQ': process_smq_file,
+                        'SMQFAM': process_smqfam_file,
+                        'SMQMEC': process_smqmec_file,
+                        'WHQ': process_whq_file,
+                        'SMQRTU': process_smqrtu_file,
+                        'COT': process_cot_file
+                    }
+
+                    # Apply specific transformations based on the file pattern using the mapping
+                    if clean_file_name in file_processing_functions:
+                        data = file_processing_functions[clean_file_name](year, data)
                     else:
                         raise ValueError(f"File name {file_name} does not match any of the patterns.")
-                    
                     # Merge the data from this file to the year-specific DataFrame
                     if year_df.empty:
                         year_df = data
